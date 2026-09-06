@@ -1,0 +1,13 @@
+# Runtime dependencies. `pip install -e .` reads pyproject.toml instead;
+# this file stays for the plain "clone and run" path described in the README.
+faster-whisper>=1.1.0
+sounddevice>=0.4.6
+soundfile>=0.12
+numpy>=1.26
+keyboard>=0.13.5
+pystray>=0.19
+Pillow>=10
+
+# NVIDIA GPU only. Remove these two lines for a CPU-only install.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
