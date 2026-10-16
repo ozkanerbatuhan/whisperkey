@@ -46,7 +46,7 @@ whisperkey = "whisperkey.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-whisperkey = ["assets/sounds/*.wav"]
+whisperkey = ["assets/sounds/*.wav", "assets/*.ico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

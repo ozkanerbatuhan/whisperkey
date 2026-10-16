@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/icon.png" width="96" alt="whisperkey icon">
+
 # whisperkey
 
 **Hold a key, talk, and the text lands in whatever window you are in.**
@@ -61,6 +63,12 @@ installing and set `"device": "cpu"` in the config.
 Then start it with **`whisperkey-silent.bat`** — it goes to the notification
 area. Windows hides new tray icons under the `^` overflow by default; drag it
 onto the taskbar to keep it visible.
+
+For a desktop shortcut with the icon (add `-StartMenu` for the Start menu too):
+
+```bash
+powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
+```
 
 ## Use
 
