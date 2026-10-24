@@ -17,14 +17,18 @@ import sys
 import threading
 import time
 import tkinter as tk
+from pathlib import Path
+
+import keyboard
 
 from .audio import MicError, Recorder
-from .config import Config
+from .config import DATA_DIR, Config
 from .engine_proc import EngineProxy
 from .hotkeys import Hotkeys, KeyCapture, pretty, split_hotkey
 from .paster import copy_only as clip_only
 from .paster import paste
 from .sounds import Sounds
+from .speaker import Speaker
 from .states import Action, Mode, PttMachine
 from .ui import theme as T
 from .ui.overlay import Overlay
@@ -55,8 +59,16 @@ class App:
         self.recorder = Recorder(cfg.samplerate, cfg.input_device)
         self.engine = EngineProxy(cfg, on_state=self._engine_state)
         self.tray = Tray(self)
+        self.speaker = None
+        if cfg.tts_key:
+            voice = Path(cfg.tts_voice)
+            self.speaker = Speaker(str(voice if voice.is_absolute() else DATA_DIR / voice),
+                                   cfg.tts_source, cfg.tts_speed)
+        self._tap_timer: threading.Timer | None = None
+        self.overlay.on_seek = lambda f: self._off_ui(self._seek, f)
+        self.overlay.on_speed = lambda step: self._off_ui(self._speed, step)
         self.keys = Hotkeys(cfg, self._on_down, self._on_up, self._on_cancel,
-                            self.cycle_language, self.repaste)
+                            self.cycle_language, self.repaste, self._speaker_keys)
         self.capture = KeyCapture()
 
         threading.Thread(target=self._worker, daemon=True).start()
@@ -117,9 +129,83 @@ class App:
             self._beep("stop")
             self._show("cancelled", T.INK_DIM, 700)
 
+    # ---------------------------------------------------------------- read aloud
+
+    def _speaker_keys(self) -> dict:
+        if self.speaker is None:
+            return {}
+        return {self.cfg.tts_key: self._on_tts_tap,
+                self.cfg.tts_prev_key: lambda: self._chapter(-1),
+                self.cfg.tts_next_key: lambda: self._chapter(+1)}
+
+    def _off_ui(self, fn, *args) -> None:
+        """Overlay clicks arrive on the UI thread; speaker work may render audio."""
+        threading.Thread(target=fn, args=args, daemon=True).start()
+
+    def _chapter(self, step: int) -> None:
+        sp = self.speaker
+        if sp.state == "idle" and not sp.timeline():
+            return
+        sp.next_chapter() if step > 0 else sp.prev_chapter()
+        self._ui(self._show_reading, 2500 if sp.state == "paused" else None)
+
+    def _seek(self, fraction: float) -> None:
+        self.speaker.seek(fraction)
+        self._ui(self._show_reading, 2500 if self.speaker.state == "paused" else None)
+
+    def _on_tts_tap(self) -> None:
+        """Tap: read / pause / resume. Double tap: media play/pause."""
+        timer, self._tap_timer = self._tap_timer, None
+        if timer is not None and timer.is_alive():
+            timer.cancel()
+            keyboard.send("play/pause media")
+            return
+        self._tap_timer = threading.Timer(self.cfg.double_tap, self._tts_toggle)
+        self._tap_timer.start()
+
+    def _tts_toggle(self) -> None:
+        state = self.speaker.toggle()
+        if state == "paused":
+            self._ui(self._show_reading, 2500)
+        elif state == "playing":
+            self._ui(self._show_reading)
+
+    def _speed(self, step: int) -> None:
+        sp = self.speaker
+        speed = sp.faster() if step > 0 else sp.slower()
+        self.cfg.tts_speed = speed
+        self.cfg.save()
+        if sp.state != "idle":
+            self._ui(self._show_reading, 2500 if sp.state == "paused" else None)
+
+    def _show_reading(self, hide_after: int | None = None) -> None:
+        sp = self.speaker
+        if not self.cfg.overlay or self.recorder.active or sp.state == "idle":
+            return
+        elapsed, total = sp.progress()
+        title = sp.title
+        if len(title) > 26:
+            title = title[:25] + "…"
+        label = f"{title}  {_clock(elapsed)}/{_clock(total)}" if title else \
+            f"{_clock(elapsed)} / {_clock(total)}"
+        self.overlay.show_reading(label, elapsed / total if total else 0.0, sp.timeline(),
+                                  sp.speed, sp.state == "playing", hide_after)
+
+    def _tick_reading(self) -> None:
+        """Runs in the UI pump: keeps the reading bar live, hides it when done."""
+        sp = self.speaker
+        if sp is None or not self.overlay.reading or self.recorder.active:
+            return
+        if sp.state == "playing":
+            self._show_reading()
+        elif sp.state == "idle":
+            self.overlay.hide()
+
     # ---------------------------------------------------------------- recording
 
     def _start(self) -> None:
+        if self.speaker is not None and self.speaker.state == "playing":
+            self.speaker.pause()          # do not talk over the dictation
         try:
             self.recorder.start()
         except MicError as exc:
@@ -294,6 +380,8 @@ class App:
         self._quitting = True
         self.capture.cancel()
         self.keys.unbind()
+        if self.speaker is not None:
+            self.speaker.stop()
         self.jobs.put((None, False))
         self.engine.close()
         self.tray.stop()
@@ -313,11 +401,14 @@ class App:
                 print(f"[warning] could not update the interface: {exc}")
         if self.recorder.active and self.cfg.overlay:
             self.overlay.set_level(self.recorder.level)
+        self._tick_reading()
         self.root.after(33, self._pump)
 
     def run(self) -> None:
         self.keys.bind()
         self.tray.start()
+        if self.speaker is not None:
+            self.speaker.warm()
         if self.cfg.keep_warm:
             self.engine.start_async()
         print(
@@ -337,3 +428,8 @@ class App:
         finally:
             self.quit()
             sys.stdout.flush()
+
+
+def _clock(seconds: float) -> str:
+    seconds = int(seconds + 0.5)
+    return f"{seconds // 60}:{seconds % 60:02d}"

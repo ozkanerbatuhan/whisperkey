@@ -139,13 +139,16 @@ class KeyCapture:
 
 
 class Hotkeys:
-    def __init__(self, cfg, on_down, on_up, on_cancel, on_lang, on_repaste):
+    def __init__(self, cfg, on_down, on_up, on_cancel, on_lang, on_repaste, extra=None):
         self.cfg = cfg
         self._on_down = on_down
         self._on_up = on_up
         self._on_cancel = on_cancel
         self._on_lang = on_lang
         self._on_repaste = on_repaste
+        # () -> {hotkey: callback}, read on every bind so new settings apply;
+        # empty keys are skipped
+        self._extra = extra or dict
         self._bound = False
 
     @staticmethod
@@ -174,6 +177,9 @@ class Hotkeys:
         keyboard.on_release_key(main, lambda e: self._on_up(), suppress=True)
         keyboard.add_hotkey(self.cfg.lang_key, self._on_lang, suppress=True)
         keyboard.add_hotkey(self.cfg.repaste_key, self._on_repaste, suppress=True)
+        for key, callback in self._extra().items():
+            if key:
+                keyboard.add_hotkey(key, callback, suppress=True)
         # Esc is deliberately NOT suppressed: swallowing it globally would
         # lock up terminals and editors.
         keyboard.on_press_key("esc", lambda e: self._on_cancel(), suppress=False)

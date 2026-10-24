@@ -77,6 +77,15 @@ class Config:
     beep: bool = True
     sound_volume: float = 0.7       # 0 = silent, 1 = as recorded
 
+    # read aloud (Piper); empty tts_key turns it off
+    tts_key: str = ""               # tap: play / pause, double tap: media play/pause
+    tts_prev_key: str = ""          # previous / next chapter
+    tts_next_key: str = ""
+    tts_voice: str = "voices/tr_TR-dfki-medium.onnx"   # relative to the data dir
+    tts_source: str = "~/.claude/last-answer.txt"      # the file that is read
+    tts_speed: float = 1.5
+    double_tap: float = 0.35
+
     # what the language key cycles through; add your own codes here
     language_cycle: list = field(default_factory=lambda: ["auto", "en"])
 

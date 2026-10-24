@@ -49,6 +49,12 @@ class Overlay:
         self._hide_job = None
         self._scan_job = None
         self._scan_pos = 0
+        self._reading = False
+        self._paused = False
+        self._hover = False
+        # read-aloud controls, set by the app: seek(fraction), speed(+1|-1)
+        self.on_seek = None
+        self.on_speed = None
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -178,6 +184,112 @@ class Overlay:
         if self._visible and self._scan_job is None:
             self._paint_meter(max(0.0, min(1.0, level)))
 
+    # -- read-aloud mode: chapter strip, click to seek, − speed +
+
+    BAR_L, BAR_R, BAR_T, BAR_B = 26, T.WIDTH - 17, 35, 45
+
+    def _build_reading(self) -> None:
+        c = self.canvas
+        # the click target covers the whole meter row, a bit taller than the strip
+        c.create_rectangle(self.BAR_L - 3, 30, self.BAR_R, 50, fill=T.SHELL, outline="",
+                           tags=("rd", "seek"))
+        x = T.WIDTH - 18
+        self._plus = c.create_text(x, 19, anchor="e", text="+", fill=T.INK,
+                                   font=T.FONT_UI_SEMI, tags=("rd", "plus"))
+        self._speed = c.create_text(x - 16, 19, anchor="e", text="1.5x", fill=T.INK_DIM,
+                                    font=self._mono(), tags=("rd",))
+        self._minus = c.create_text(x - 52, 19, anchor="e", text="−", fill=T.INK,
+                                    font=T.FONT_UI_SEMI, tags=("rd", "minus"))
+        # generous hit boxes: the glyphs themselves are a few pixels wide
+        for tag, cx in (("plus", x - 4), ("minus", x - 56)):
+            c.create_rectangle(cx - 9, 6, cx + 9, 30, fill="", outline="", tags=("rd", tag))
+        c.tag_bind("seek", "<Button-1>", self._click_seek)
+        c.tag_bind("plus", "<Button-1>", lambda e: self.on_speed and self.on_speed(+1))
+        c.tag_bind("minus", "<Button-1>", lambda e: self.on_speed and self.on_speed(-1))
+        c.bind("<Enter>", self._enter)
+        c.bind("<Leave>", self._leave)
+        c.itemconfigure("rd", state="hidden")
+
+    def _click_seek(self, event) -> None:
+        if self.on_seek:
+            self.on_seek(max(0.0, min(1.0, (event.x - self.BAR_L) / (self.BAR_R - self.BAR_L))))
+
+    def _enter(self, _event) -> None:
+        # pointer on the bar: do not vanish under the mouse
+        self._hover = True
+        if self._hide_job is not None:
+            self.root.after_cancel(self._hide_job)
+            self._hide_job = None
+
+    def _leave(self, _event) -> None:
+        self._hover = False
+        if self._reading and self._paused:
+            self._hide_job = self.root.after(2500, self.hide)
+
+    def show_reading(self, label: str, fraction: float, chapters, speed: float,
+                     playing: bool, hide_after: int | None = None) -> None:
+        """chapters: [(start, end, title)] as fractions; drawn as separate segments."""
+        c = self.canvas
+        if not self._reading:
+            self._stop_scan()
+            self._reading = True
+            if not hasattr(self, "_plus"):
+                self._build_reading()
+            for item in self.ticks:
+                c.itemconfigure(item, state="hidden")
+            c.itemconfigure(self.peak_mark, state="hidden")
+            c.itemconfigure(self.lang, state="hidden")
+            c.itemconfigure("rd", state="normal")
+        self._paused = not playing
+        color = T.DONE if playing else T.INK_DIM
+        c.itemconfigure(self.label, text=label)
+        c.itemconfigure(self.stripe, fill=color)
+        c.itemconfigure(self._speed, text=f"{speed:.1f}x")
+
+        c.delete("seg")
+        width = self.BAR_R - self.BAR_L
+        gap = 3 if len(chapters) > 1 else 0
+        for start, end, _title in chapters:
+            x1 = self.BAR_L + start * width
+            x2 = max(x1 + 2, self.BAR_L + end * width - gap)
+            c.create_rectangle(x1, self.BAR_T, x2, self.BAR_B, fill=T.IDLE_TICK,
+                               outline="", tags=("seg",))
+            done = min(x2, self.BAR_L + fraction * width)
+            if done > x1:
+                c.create_rectangle(x1, self.BAR_T, done, self.BAR_B, fill=color,
+                                   outline="", tags=("seg",))
+        head = self.BAR_L + fraction * width
+        c.create_rectangle(head - 1, self.BAR_T - 3, head + 1, self.BAR_B + 3,
+                           fill="#FFFFFF", outline="", tags=("seg",))
+        # clicks land on the strip too, not only on the background
+        c.tag_bind("seg", "<Button-1>", self._click_seek)
+
+        if not self._visible:
+            self._place()
+            self._apply_exstyle()
+            _u32.ShowWindow(ctypes.c_void_p(self._hwnd), SW_SHOWNOACTIVATE)
+            self._visible = True
+        if self._hide_job is not None:
+            self.root.after_cancel(self._hide_job)
+            self._hide_job = None
+        if hide_after and not self._hover:
+            self._hide_job = self.root.after(hide_after, self.hide)
+
+    def _end_reading(self) -> None:
+        if not self._reading:
+            return
+        self._reading = False
+        c = self.canvas
+        c.delete("seg")
+        c.itemconfigure("rd", state="hidden")
+        c.itemconfigure(self.lang, state="normal")
+        for item in self.ticks:
+            c.itemconfigure(item, state="normal")
+
+    @property
+    def reading(self) -> bool:
+        return self._reading
+
     def set_language(self, lang: str) -> None:
         self.canvas.itemconfigure(self.lang, text=lang)
 
@@ -186,6 +298,7 @@ class Overlay:
         if self._hide_job is not None:
             self.root.after_cancel(self._hide_job)
             self._hide_job = None
+        self._end_reading()
         if busy:
             self._start_scan()
         else:
@@ -208,3 +321,4 @@ class Overlay:
             _u32.ShowWindow(ctypes.c_void_p(self._hwnd), SW_HIDE)
             self._visible = False
         self._stop_scan()
+        self._end_reading()

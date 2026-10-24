@@ -8,6 +8,9 @@ keyboard>=0.13.5
 pystray>=0.19
 Pillow>=10
 
+# Read aloud only (optional): local Piper voices
+piper-tts>=1.3
+
 # NVIDIA GPU only. Remove these two lines for a CPU-only install.
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*

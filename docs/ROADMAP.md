@@ -18,20 +18,36 @@ Notes:
 - `states.py` needs a second event source: today only key events reach it, the
   silence detector would have to produce events too.
 
-### 2. Text to speech - the other direction
+### 2. Read-aloud polish
 
-Speech becomes text today; reading text back out is the natural counterpart.
-
-Notes:
-- It does not have to live in the same process; it is a separate capability.
-  But the shortcut handling, tray icon and audio device management are shared,
-  so one roof makes sense.
-- Voice quality outside English is the deciding factor. The SAPI voices shipped
-  with Windows are English only; anything else needs a local model (Piper, XTTS
-  or similar). Do not promise quality before measuring it.
-- It has to be interruptible: one key press should stop the speech.
+- Only one official Turkish Piper voice exists (`tr_TR-dfki-medium`); try
+  community voices or a second engine for languages where Piper is thin.
+- What gets read is a first cut (`speaker.clean`): code blocks, tables and
+  links are dropped. Tune it from real listening.
+- Seeking lands on the start of a sentence; mid-sentence seeking would need
+  the sample offset kept for not-yet-rendered sentences.
+- A settings page for the `tts_*` keys (they are config-only today).
 
 ## Done
+
+### Read aloud (text to speech)
+
+The other direction: a key reads a text file aloud with a local
+[Piper](https://github.com/OHF-Voice/piper1-gpl) voice, in the same process
+and the same overlay as dictation.
+
+- Measured first: edge-tts (Microsoft's online voices) sounded best but
+  returned no audio on 5 of 8 requests in a row — unusable for "press and it
+  speaks". Piper renders the first sentence in ~0.1 s once warm (warm-up
+  ~1.7 s happens at startup), entirely offline.
+- Sentences are rendered by one background thread while the audio callback
+  plays; a speed change re-renders the current sentence and jumps to the same
+  relative position, so it is heard at once.
+- Headings and bold-label paragraphs become chapters; the overlay draws them
+  as separate segments. Click to seek, − / + for speed, a key per
+  previous / next chapter.
+- Tap = play / pause / resume, double tap = media play/pause (so the same
+  physical key still controls music). Dictation pauses the reading.
 
 ### Sounds
 
