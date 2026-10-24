@@ -99,3 +99,11 @@ def test_sure_grammar_hit_alone():
 
     assert trusted_alone([1.0])
     assert not trusted_alone([0.59, 1.0])
+
+
+def test_addresses_me_only_with_the_name():
+    from whisperkey.commands import addresses_me
+
+    assert addresses_me("dayı kapat")
+    assert addresses_me("dayı gönder")
+    assert not addresses_me("sonraki")

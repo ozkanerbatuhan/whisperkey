@@ -221,6 +221,15 @@ window instead.
 - **Tuning data.** Every command decision and every wake-like phrase heard is
   appended to `voice-log.jsonl` (ordinary speech is never written; capped at
   1 MB). That file shows how *your* voice is heard from where you sit.
+- **Talking over the reading.** The grammar recognizer finishes a phrase
+  before the free one; the decision waits up to 0.8 s for both. A sure
+  "<name> ..." heard while reading pauses the reading at once, so a repeated
+  command lands in silence.
+- **Transcript (opt-in).** `voice_transcript: true` writes everything the
+  listener hears to `transcripts/<date>.txt`, one timestamped line each
+  (lines heard while reading are marked - they may be the speaker's echo).
+  It is the small model's rough text, not Whisper's; off by default because
+  the microphone is always open.
 - **Echo cancellation.** The read-aloud audio is known sample for sample, so
   it is fed to WebRTC's echo canceller (via the `livekit` package) as the
   reference and removed from the microphone. In a synthetic test the echo

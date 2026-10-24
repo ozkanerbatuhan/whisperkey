@@ -38,9 +38,12 @@ DEBUG = bool(os.environ.get("WHISPERKEY_VOICE_DEBUG"))  # print everything heard
 
 
 class Listener:
-    def __init__(self, model_path: str, on_command, device=None, log_path=None):
+    def __init__(self, model_path: str, on_command, device=None, log_path=None,
+                 transcript_dir=None):
         self.model_path = model_path
-        self.log_path = log_path                # near misses, for tuning (jsonl)
+        self.log_path = log_path                # command decisions, for tuning (jsonl)
+        self.transcript_dir = transcript_dir    # everything heard, per day (opt-in)
+        self._pending = None                    # (time, grammar result) awaiting the free one
         self.on_command = on_command            # on_command(action, phrase)
         self.device = device
         self.state = "idle"                     # idle | reading | dictating
@@ -151,7 +154,8 @@ class Listener:
                 gram.SetWords(True)
                 self._grammar_state = self.state
 
-            if free.AcceptWaveform(chunk):
+            free_final = free.AcceptWaveform(chunk)
+            if free_final:
                 text = json.loads(free.Result()).get("text", "")
                 if text:
                     self._recent.append((time.monotonic(), text))
@@ -159,6 +163,7 @@ class Listener:
                         print(f"[voice] heard: {text!r}")
                     if commands.sounds_like_wake(text):
                         self._log("heard", text)
+                    self._transcribe(text)
                 self._partial = ""
             else:
                 # words still coming = still talking, even if quietly
@@ -168,7 +173,15 @@ class Listener:
                     if partial:
                         self.last_speech = time.monotonic()
             if gram.AcceptWaveform(chunk):
-                self._decide(json.loads(gram.Result()), free)
+                result = json.loads(gram.Result())
+                if result.get("text") in commands.phrases(self.state):
+                    # the grammar recognizer finishes first; give the free one a
+                    # moment to finish the same words before judging
+                    self._pending = (time.monotonic(), result)
+                    self._attention(result)
+            if self._pending and (free_final or time.monotonic() - self._pending[0] > 0.8):
+                result, self._pending = self._pending[1], None
+                self._decide(result, free)
             if DEBUG and time.monotonic() - self._level_at > 5:
                 self._level_at = time.monotonic()
                 print(f"[voice] mic peak rms={self._peak_rms:.0f} noise={self._noise:.0f}")
@@ -178,6 +191,31 @@ class Listener:
             self._stream.stop()
             self._stream.close()
         except Exception:
+            pass
+
+    def _attention(self, result: dict) -> None:
+        """While reading, a sure "<name> ..." means you are talking to it: stop
+        talking over you at once, so the command is heard in silence (the
+        decision itself comes a moment later, and may still say no)."""
+        if self.state != "reading" or not self.playing_text:
+            return
+        phrase = result.get("text", "")
+        conf = [w.get("conf", 1.0) for w in result.get("result", [])]
+        if commands.addresses_me(phrase) and conf and min(conf) >= 0.9:
+            self.on_command("attention", phrase)
+
+    def _transcribe(self, text: str) -> None:
+        """Everything the free recognizer heard, one line each, per day (opt-in).
+        Lines heard while the speaker reads are marked: they may be its echo."""
+        if not self.transcript_dir:
+            return
+        try:
+            os.makedirs(self.transcript_dir, exist_ok=True)
+            path = os.path.join(self.transcript_dir, time.strftime("%Y-%m-%d") + ".txt")
+            mark = " [reading]" if self.playing_text else ""
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%H:%M:%S')}{mark} {text}\n")
+        except OSError:
             pass
 
     def _log(self, kind: str, heard: str, phrase: str = "", conf=()) -> None:

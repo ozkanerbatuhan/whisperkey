@@ -151,6 +151,13 @@ def trusted_alone(confidences: list[float]) -> bool:
     return bool(confidences) and min(confidences) >= MIN_CONFIDENCE_ALONE
 
 
+def addresses_me(phrase: str) -> bool:
+    """A phrase that starts with the wake name ("dayı kapat", not "sonraki")."""
+    names = {p.split()[0] for p in WAKE if len(p.split()) > 1}
+    words = norm(phrase).split()
+    return bool(words) and words[0] in names
+
+
 def sounds_like_wake(text: str) -> bool:
     """Free transcript that resembles a wake phrase - worth logging for tuning."""
     words = norm(text).split()

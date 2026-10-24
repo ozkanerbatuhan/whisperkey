@@ -13,3 +13,4 @@ __pycache__/
 test-*.wav
 voices/
 voice-log.jsonl*
+transcripts/

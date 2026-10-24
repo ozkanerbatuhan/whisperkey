@@ -94,6 +94,9 @@ class Config:
     voice_model: str = "voices/vosk-model-small-tr-0.3"  # relative to the data dir
     voice_silence: float = 2.5      # spoken dictation ends after this much silence
     voice_phrases: dict = field(default_factory=dict)   # action -> [phrases]; empty = defaults
+    # write everything the listener hears to transcripts/<date>.txt (rough,
+    # small-model text; off by default - the microphone is always open)
+    voice_transcript: bool = False
     # spoken dictation is typed into the console of the process named in this
     # file, in the background; empty = paste into the focused window instead
     voice_target: str = "~/.claude/last-session.json"

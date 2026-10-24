@@ -243,7 +243,9 @@ class App:
         if self.cfg.voice and self.listener is None:
             self.speaker.warm()
             self.listener = Listener(str(_data_path(self.cfg.voice_model)), self._on_voice,
-                                     log_path=str(DATA_DIR / "voice-log.jsonl"))
+                                     log_path=str(DATA_DIR / "voice-log.jsonl"),
+                                     transcript_dir=str(DATA_DIR / "transcripts")
+                                     if self.cfg.voice_transcript else None)
             self.speaker.tap = self.listener.feed_far
             self.listener.start()
         elif not self.cfg.voice and self.listener is not None:
@@ -299,6 +301,11 @@ class App:
         elif action == "cancel":
             self._voice_dictation = self._voice_send = False
             self._on_cancel()
+        elif action == "attention":
+            # "<name> ..." heard over the reading: stop talking, listen
+            if sp.state == "playing":
+                sp.pause()
+                self._ui(self._show_reading, 2500)
         elif action == "close":
             # like typing /exit in the session that answered last
             pid = console.target(self.cfg.voice_target) if self.cfg.voice_target else None
