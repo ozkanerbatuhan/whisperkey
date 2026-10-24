@@ -1,4 +1,4 @@
-from whisperkey.speaker import chapters, clean, sentences
+from whisperkey.reading import chapters, clean, sentences
 
 
 def test_bold_labels_become_chapters():

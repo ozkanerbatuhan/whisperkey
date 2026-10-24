@@ -247,7 +247,7 @@ engine needs its own process and why this is Python rather than Rust.
 ```
 
 The state machine (`states.py`), shortcut parsing (`hotkeys.py`), the sound
-layer (`sounds.py`) and the read-aloud text splitting (`speaker.py`) are all
+layer (`sounds.py`) and the read-aloud text splitting (`reading.py`) are all
 tested without a GUI or audio hardware.
 
 ## Requirements

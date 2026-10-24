@@ -22,7 +22,7 @@ Notes:
 
 - Only one official Turkish Piper voice exists (`tr_TR-dfki-medium`); try
   community voices or a second engine for languages where Piper is thin.
-- What gets read is a first cut (`speaker.clean`): code blocks, tables and
+- What gets read is a first cut (`reading.clean`): code blocks, tables and
   links are dropped. Tune it from real listening.
 - Seeking lands on the start of a sentence; mid-sentence seeking would need
   the sample offset kept for not-yet-rendered sentences.
