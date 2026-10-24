@@ -129,6 +129,11 @@ class Panel:
         self._link(bar, "Quit", self._quit, T.INK_DIM).pack(side="right")
         self._link(bar, "Settings", self._settings, T.AMBER).pack(
             side="right", padx=(0, 14))
+        self._link(bar, "Voice commands", self._commands, T.INK_DIM).pack(side="left")
+
+    def _commands(self) -> None:
+        self.hide()
+        self.app.show_voice_commands()
 
     def _link(self, parent, text: str, command, fg: str) -> tk.Button:
         return tk.Button(

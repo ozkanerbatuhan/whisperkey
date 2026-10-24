@@ -34,6 +34,7 @@ from .sounds import Sounds
 from .speaker import Speaker
 from .states import Action, Mode, PttMachine
 from .ui import theme as T
+from .ui.onboarding import CommandsDialog, NameDialog
 from .ui.overlay import Overlay
 from .ui.panel import Panel
 from .ui.settings import SettingsWindow
@@ -52,6 +53,11 @@ class App:
 
         self.root = tk.Tk()
         self.root.withdraw()
+        try:
+            # default=: every Toplevel (settings, dialogs) inherits it
+            self.root.iconbitmap(default=str(Path(__file__).parent / "assets" / "whisperkey.ico"))
+        except tk.TclError:
+            pass
 
         self.overlay = Overlay(self.root, cfg.overlay_offset)
         self.overlay.set_language(cfg.language)
@@ -68,6 +74,7 @@ class App:
         self._voice_dictation = False   # the running dictation was started by voice
         self._voice_started = 0.0
         self._voice_send = False
+        self._onboarding = False        # the wake-name dialog is open
         self._voice_ended = 0.0         # when the last spoken dictation stopped
         self._send_pending = False      # "send" heard while still transcribing
         self._typed_pid = None          # session typed into without Enter...
@@ -211,9 +218,18 @@ class App:
 
     # ---------------------------------------------------------------- voice commands
 
+    def _voice_lang(self) -> str:
+        return commands.language_of(self.cfg.voice_model)
+
     def _sync_voice(self) -> None:
         """Start or stop the always-on listener to match `cfg.voice`."""
-        commands.configure(self.cfg.voice_phrases)
+        commands.configure(self.cfg.voice_phrases, self.cfg.voice_name, self._voice_lang())
+        if self.cfg.voice and not self.cfg.voice_name:
+            # no built-in wake word: ask for one first, then show the commands
+            if not self._onboarding:
+                self._onboarding = True
+                self._ui(self._ask_voice_name)
+            return
         if self.cfg.voice and self.listener is None:
             self.speaker.warm()
             self.listener = Listener(str(_data_path(self.cfg.voice_model)), self._on_voice,
@@ -224,6 +240,31 @@ class App:
             self.speaker.tap = None
             self.listener.stop()
             self.listener = None
+
+    def _ask_voice_name(self) -> None:
+        example = commands.TEMPLATES.get(self._voice_lang(), commands.TEMPLATES["en"])
+        example = example["dictate"][0].replace("{name}", "").strip()
+        NameDialog(self.root, self._voice_named, example)
+
+    def _voice_named(self, name: str | None) -> None:
+        self._onboarding = False
+        if not name:                    # cancelled: voice commands stay off
+            self.cfg.voice = False
+            self.cfg.save()
+            self.tray.refresh()
+            if self.panel.visible:
+                self.panel.refresh()
+            return
+        self.cfg.voice_name = name
+        self.cfg.save()
+        commands.configure(self.cfg.voice_phrases, name, self._voice_lang())
+        self.show_voice_commands(first=True)
+
+    def show_voice_commands(self, first: bool = False) -> None:
+        """The command list; on first start, listening begins when it is closed."""
+        table = commands.defaults(self.cfg.voice_name, self._voice_lang())
+        table.update({a: p for a, p in (self.cfg.voice_phrases or {}).items() if a in table})
+        CommandsDialog(self.root, table, self._sync_voice if first else None, first)
 
     def _on_voice(self, action: str, phrase: str) -> None:
         """A spoken command, from the listener thread."""

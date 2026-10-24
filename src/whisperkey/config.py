@@ -88,6 +88,7 @@ class Config:
 
     # voice commands (Vosk, always listening); off by default
     voice: bool = False
+    voice_name: str = ""            # the wake name, asked on first start ("<name> listen")
     voice_model: str = "voices/vosk-model-small-tr-0.3"  # relative to the data dir
     voice_silence: float = 2.5      # spoken dictation ends after this much silence
     voice_phrases: dict = field(default_factory=dict)   # action -> [phrases]; empty = defaults

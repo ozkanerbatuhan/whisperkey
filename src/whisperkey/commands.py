@@ -14,18 +14,31 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
-# action -> phrases. Defaults are Turkish ("dayı" = the wake word); every one
-# of them can be replaced from config.json / Settings → Voice.
-DEFAULT_PHRASES = {
-    "dictate": ["dayı dinle"],
-    "read": ["dayı oku"],
-    "next": ["sonraki", "bir sonraki"],
-    "prev": ["önceki", "bir önceki"],
-    "pause": ["dur", "okumayı durdur", "dayı dur"],
-    "resume": ["devam", "devam et", "okumayı başlat"],
-    "done": ["dayı tamam"],
-    "send": ["dayı gönder"],
-    "cancel": ["dayı iptal"],
+# action -> phrase templates per language; {name} is the wake name the user
+# picks on first start. The language must match the Vosk model's.
+TEMPLATES = {
+    "tr": {
+        "dictate": ["{name} dinle"],
+        "read": ["{name} oku"],
+        "next": ["sonraki", "bir sonraki"],
+        "prev": ["önceki", "bir önceki"],
+        "pause": ["dur", "okumayı durdur", "{name} dur"],
+        "resume": ["devam", "devam et", "okumayı başlat"],
+        "done": ["{name} tamam"],
+        "send": ["{name} gönder"],
+        "cancel": ["{name} iptal"],
+    },
+    "en": {
+        "dictate": ["{name} listen"],
+        "read": ["{name} read"],
+        "next": ["next", "next part"],
+        "prev": ["previous", "go back"],
+        "pause": ["stop", "pause", "{name} stop"],
+        "resume": ["resume", "continue"],
+        "done": ["{name} done"],
+        "send": ["{name} send"],
+        "cancel": ["{name} cancel"],
+    },
 }
 WAKE_ACTIONS = ("dictate", "read")
 READING_ACTIONS = ("next", "prev", "pause", "resume")
@@ -36,9 +49,25 @@ READING: dict[str, str] = {}
 DICTATING: dict[str, str] = {}
 
 
-def configure(mapping: dict | None = None) -> None:
-    """Load phrases (action -> list of phrases); missing actions keep the defaults."""
-    table = {a: list(p) for a, p in DEFAULT_PHRASES.items()}
+def language_of(model_path: str) -> str:
+    """Template language from the Vosk model folder name (vosk-model-small-tr-0.3)."""
+    parts = re.split(r"[-_./\\]", model_path.lower())
+    return next((p for p in parts if p in TEMPLATES), "en")
+
+
+def defaults(name: str, lang: str = "tr") -> dict[str, list[str]]:
+    """Phrases for a wake name. Without a name, phrases that need one are left
+    out - a bare "listen" would fire on every sentence that contains it."""
+    name = norm(name)
+    table = TEMPLATES.get(lang, TEMPLATES["en"])
+    return {a: [norm(t.format(name=name)) for t in items if name or "{name}" not in t]
+            for a, items in table.items()}
+
+
+def configure(mapping: dict | None = None, name: str = "", lang: str = "tr") -> None:
+    """Load phrases: the language's templates with `name`, then overrides
+    (action -> list of phrases) from the config."""
+    table = defaults(name, lang)
     for action, items in (mapping or {}).items():
         if action in table:
             table[action] = [norm(p) for p in items if norm(p)]

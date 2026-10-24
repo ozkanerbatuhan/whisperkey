@@ -226,13 +226,17 @@ class SettingsWindow:
         self._section("Voice commands")
         self._check("voice", "Listen for spoken commands (the microphone stays open)",
                     cfg.voice)
+        self._entry("voice_name", "Wake name", cfg.voice_name, 16)
         self._entry("voice_silence", "Silence that ends dictation (s)", cfg.voice_silence, 10)
         self._entry("voice_target", "Type into session (empty = paste)", cfg.voice_target)
-        table = {a: list(p) for a, p in commands.DEFAULT_PHRASES.items()}
+        self._lang = commands.language_of(cfg.voice_model)
+        self._defaults = commands.defaults(cfg.voice_name, self._lang)
+        table = {a: list(p) for a, p in self._defaults.items()}
         table.update(cfg.voice_phrases or {})
         for action, text in VOICE_ACTIONS:
             self._entry(f"phrase:{action}", text, ", ".join(table.get(action, [])))
-        tk.Label(self.body, text="Several phrases: separate them with commas.",
+        tk.Label(self.body, text="Several phrases: separate them with commas. "
+                                 "Change the wake name and the defaults follow.",
                  bg=T.SHELL, fg=T.INK_DIM, font=T.FONT_UI, anchor="w").grid(
             row=self.row, column=0, columnspan=2, sticky="w", pady=(2, 0))
         self.row += 1
@@ -323,15 +327,19 @@ class SettingsWindow:
             setattr(cfg, key, bool(self.vars[key].get()))
         cfg.tts_source = self.vars["tts_source"].get().strip() or cfg.tts_source
         cfg.voice_target = self.vars["voice_target"].get().strip()
+        cfg.voice_name = " ".join(self.vars["voice_name"].get().split())
         phrases = {}
         for action, _ in VOICE_ACTIONS:
-            items = [p.strip() for p in self.vars[f"phrase:{action}"].get().split(",")]
+            items = [commands.norm(p) for p in self.vars[f"phrase:{action}"].get().split(",")]
             items = [p for p in items if p]
+            # only what differs from the shown defaults is stored, so a new wake
+            # name carries over to every phrase that was left alone
+            if items == self._defaults[action]:
+                continue
             if not items:
                 self.note.configure(text=f"Every command needs a phrase ({action})", fg=T.FAIL)
                 return
-            if items != commands.DEFAULT_PHRASES[action]:
-                phrases[action] = items     # only what differs from the defaults is saved
+            phrases[action] = items
         cfg.voice_phrases = phrases
 
         errors = []

@@ -3,7 +3,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from whisperkey import commands  # noqa: E402
 from whisperkey.commands import accept, echoed, grammar, phrases, strip_tail  # noqa: E402
+
+commands.configure(name="dayı", lang="tr")
 
 
 def test_reading_words_only_while_reading():
@@ -49,7 +52,25 @@ def test_phrases_are_configurable():
         assert phrases("dictating")["over"] == "done"
         assert strip_tail("see you tomorrow, over") == "see you tomorrow"
     finally:
-        commands.configure()
+        commands.configure(name="dayı", lang="tr")
+
+
+def test_wake_name_fills_the_templates():
+    try:
+        commands.configure(name="Jarvis", lang="en")
+        assert phrases("idle")["jarvis listen"] == "dictate"
+        assert phrases("dictating")["jarvis send"] == "send"
+        commands.configure(name="", lang="tr")
+        assert phrases("idle") == {}            # no name, no wake phrases
+        assert "sonraki" in phrases("reading")  # name-free ones stay
+    finally:
+        commands.configure(name="dayı", lang="tr")
+
+
+def test_language_from_model_folder():
+    assert commands.language_of("voices/vosk-model-small-tr-0.3") == "tr"
+    assert commands.language_of("voices/vosk-model-small-en-us-0.15") == "en"
+    assert commands.language_of("voices/vosk-model-small-de-0.15") == "en"
 
 
 def test_split_wake_word_still_counts():

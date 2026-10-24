@@ -174,23 +174,27 @@ a small [Vosk](https://alphacephei.com/vosk/) model listens for a handful of
 phrases. Nothing else is transcribed or kept; Whisper only starts when you ask
 it to.
 
-The defaults are Turkish, with *dayı* as the wake word. Every phrase is yours
-to change in **Settings → Voice commands** (several per command, separated by
-commas):
+There is no built-in wake word. The first time voice commands are turned on,
+whisperkey asks for a **name** to answer to, then shows the command list (also
+in the tray panel later). Every command that could fire by accident starts
+with that name. Phrase templates exist for Turkish and English and follow the
+Vosk model's language; every phrase can be changed in **Settings → Voice
+commands** (several per command, separated by commas).
 
-| command | default phrase | what it does |
-|---|---|---|
-| start dictating | `dayı dinle` | hands-free dictation starts (reading pauses) |
-| finish | `dayı tamam` | deliver the text; the phrase itself is cut from it |
-| finish and send | `dayı gönder` | deliver and press Enter — also works up to 15 s after the dictation ended on silence |
-| cancel | `dayı iptal` | throw the recording away |
-| — | 2.5 s of silence | also finishes a spoken dictation |
-| start reading | `dayı oku` | read the file aloud |
-| pause / resume | `dur` · `devam` | while reading |
-| next / previous | `sonraki` · `önceki` | jump between chapters while reading |
+| command | Turkish | English | what it does |
+|---|---|---|---|
+| start dictating | `<name> dinle` | `<name> listen` | hands-free dictation starts (reading pauses) |
+| finish | `<name> tamam` | `<name> done` | deliver the text; the phrase itself is cut from it |
+| finish and send | `<name> gönder` | `<name> send` | deliver and press Enter — also up to 15 s after a dictation ended on silence |
+| cancel | `<name> iptal` | `<name> cancel` | throw the recording away |
+| — | 2.5 s of silence | | also finishes a spoken dictation |
+| start reading | `<name> oku` | `<name> read` | read the file aloud |
+| pause / resume | `dur` · `devam` | `stop` · `resume` | while reading |
+| next / previous | `sonraki` · `önceki` | `next` · `previous` | jump between chapters while reading |
 
 Reading commands are only listened for while something is being read, so
-"sonraki" in an everyday sentence does nothing.
+"next" in an everyday sentence does nothing. The name has to be a word the
+speech model knows — a short, common word of your language works best.
 
 **Where the text goes - without touching your focus.** A spoken dictation is
 not pasted into the window in front: you may be busy somewhere else. It is
@@ -293,7 +297,7 @@ Worth knowing:
 | `tts_key` | read-aloud key; empty turns read-aloud off. `tts_prev_key` / `tts_next_key` move between chapters. |
 | `tts_voice`, `tts_source` | the Piper voice (relative to the data folder) and the file that is read. |
 | `tts_speed`, `double_tap` | reading speed (0.8–2.5) and the double-tap window in seconds (default 0.35). |
-| `voice`, `voice_model` | voice commands on/off and the Vosk model folder. |
+| `voice`, `voice_name`, `voice_model` | voice commands on/off, the wake name (asked on first start) and the Vosk model folder (its language picks the phrase templates). |
 | `voice_silence`, `voice_phrases` | silence (s) that ends a spoken dictation; `{"action": ["phrase", ...]}` overrides — only what differs from the defaults is stored. |
 | `voice_target` | JSON file naming the session (`pid`) that spoken dictation is typed into in the background; empty = paste into the focused window. |
 
