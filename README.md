@@ -31,6 +31,11 @@ It also works the other way round: a key reads a text file aloud with a local
 answer of an AI assistant — with chapters, seeking and live speed control in
 the same overlay. See [Read aloud](#read-aloud).
 
+And hands-free: with [voice commands](#voice-commands) on, a small offline
+model listens for a few phrases, so "start dictating", "send", "read",
+"next" work without touching a key — with the speaker's own voice removed
+from the microphone by an echo canceller.
+
 ## Why it might suit you
 
 - **Nothing leaves the machine.** The model runs locally; there is no server.
@@ -162,6 +167,77 @@ the last answer to `~/.claude/last-answer.txt` after every reply (headless
 
 Any other tool works the same way: whatever writes the file, the key reads it.
 
+## Voice commands
+
+Off by default. Turn on **Voice commands** in the tray panel or Settings, and
+a small [Vosk](https://alphacephei.com/vosk/) model listens for a handful of
+phrases. Nothing else is transcribed or kept; Whisper only starts when you ask
+it to.
+
+The defaults are Turkish, with *dayı* as the wake word. Every phrase is yours
+to change in **Settings → Voice commands** (several per command, separated by
+commas):
+
+| command | default phrase | what it does |
+|---|---|---|
+| start dictating | `dayı dinle` | hands-free dictation starts (reading pauses) |
+| finish | `dayı tamam` | deliver the text; the phrase itself is cut from it |
+| finish and send | `dayı gönder` | deliver and press Enter — also works up to 15 s after the dictation ended on silence |
+| cancel | `dayı iptal` | throw the recording away |
+| — | 2.5 s of silence | also finishes a spoken dictation |
+| start reading | `dayı oku` | read the file aloud |
+| pause / resume | `dur` · `devam` | while reading |
+| next / previous | `sonraki` · `önceki` | jump between chapters while reading |
+
+Reading commands are only listened for while something is being read, so
+"sonraki" in an everyday sentence does nothing.
+
+**Where the text goes - without touching your focus.** A spoken dictation is
+not pasted into the window in front: you may be busy somewhere else. It is
+typed straight into the console of the AI session that answered last, in the
+background (`WriteConsoleInputW` - works in Windows Terminal tabs too); the
+window is not activated and your keyboard and mouse are left alone. The
+session's process id comes from `~/.claude/last-session.json`, written by the
+Stop hook in `tools/save_last_answer.py`. No live session → the text is only
+copied to the clipboard. Set `voice_target` to empty to paste into the focused
+window instead.
+
+- **Two recognizers, one decision.** A grammar-limited recognizer only knows
+  the phrases — and so maps *anything* to the nearest one. A second, free
+  recognizer hears the same audio; a command counts only when its words match
+  what the free one heard, word by word (or, for words the free model splits —
+  "dayı" → "da iyi" — without the spaces). In testing this turned "dayım
+  geldi" (rejected) apart from "dayı gönder" (accepted). While reading, the
+  speaker drowns the free recognizer, so a grammar hit with confidence ≥ 0.95
+  is enough there.
+- **Distance.** The canceller's automatic gain and noise suppression lift a
+  command said across the room; the end of a dictation is "3 × the room's own
+  noise", tracked live, rather than a fixed level.
+- **Tuning data.** Every command decision and every wake-like phrase heard is
+  appended to `voice-log.jsonl` (ordinary speech is never written; capped at
+  1 MB). That file shows how *your* voice is heard from where you sit.
+- **Echo cancellation.** The read-aloud audio is known sample for sample, so
+  it is fed to WebRTC's echo canceller (via the `livekit` package) as the
+  reference and removed from the microphone. In a synthetic test the echo
+  dropped from RMS 3317 to 13. A command word that appears in the sentence
+  being read is ignored as a second guard. Talking *over* the speaker is the
+  weak spot — headphones avoid it entirely.
+- **Cost.** Measured: the Vosk model takes ~105 MB of RAM, the echo canceller
+  ~2 MB, and listening uses about 8 % of one CPU core. No GPU.
+
+**Setup.**
+
+```bash
+uv pip install --python .venv/Scripts/python.exe vosk livekit
+curl -L -o vosk.zip https://alphacephei.com/vosk/models/vosk-model-small-tr-0.3.zip
+tar -xf vosk.zip -C voices && del vosk.zip
+```
+
+For another language, take a small model from the
+[Vosk model list](https://alphacephei.com/vosk/models), point `voice_model` at
+it, and replace the phrases. `WHISPERKEY_VOICE_DEBUG=1` prints everything the
+listener hears and the microphone level, useful for tuning.
+
 ## Memory and speed
 
 The engine lives in a separate process: it is born when you start talking and
@@ -217,6 +293,13 @@ Worth knowing:
 | `tts_key` | read-aloud key; empty turns read-aloud off. `tts_prev_key` / `tts_next_key` move between chapters. |
 | `tts_voice`, `tts_source` | the Piper voice (relative to the data folder) and the file that is read. |
 | `tts_speed`, `double_tap` | reading speed (0.8–2.5) and the double-tap window in seconds (default 0.35). |
+| `voice`, `voice_model` | voice commands on/off and the Vosk model folder. |
+| `voice_silence`, `voice_phrases` | silence (s) that ends a spoken dictation; `{"action": ["phrase", ...]}` overrides — only what differs from the defaults is stored. |
+| `voice_target` | JSON file naming the session (`pid`) that spoken dictation is typed into in the background; empty = paste into the focused window. |
+
+Whisper sometimes invents a subtitle credit on trailing silence ("Altyazı
+M.K.", "Thanks for watching"); a known list is cut from the end of every
+transcript (`reading.drop_hallucinations`).
 
 ## How it works
 

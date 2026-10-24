@@ -86,6 +86,15 @@ class Config:
     tts_speed: float = 1.5
     double_tap: float = 0.35
 
+    # voice commands (Vosk, always listening); off by default
+    voice: bool = False
+    voice_model: str = "voices/vosk-model-small-tr-0.3"  # relative to the data dir
+    voice_silence: float = 2.5      # spoken dictation ends after this much silence
+    voice_phrases: dict = field(default_factory=dict)   # action -> [phrases]; empty = defaults
+    # spoken dictation is typed into the console of the process named in this
+    # file, in the background; empty = paste into the focused window instead
+    voice_target: str = "~/.claude/last-session.json"
+
     # what the language key cycles through; add your own codes here
     language_cycle: list = field(default_factory=lambda: ["auto", "en"])
 

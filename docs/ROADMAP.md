@@ -2,21 +2,15 @@
 
 ## Open
 
-### 1. Automatic start and stop (priority)
+### 1. Voice commands: field tuning
 
-Work without holding a key: start recording when speech begins, stop and paste
-when it ends.
-
-Notes:
-- Silence detection is mostly in place already — `audio.Recorder.level` gives a
-  live RMS and Whisper has `vad_filter`. What is missing is a threshold plus a
-  silence counter in the recording layer (e.g. 700 ms of silence = stop).
-- One decision to make: listen to the microphone continuously (always ready,
-  but exposed to room noise and false triggers) or put automatic mode behind a
-  key. The second is safer, the first is more comfortable.
-- Push-to-talk must stay. Automatic mode goes next to it, not in place of it.
-- `states.py` needs a second event source: today only key events reach it, the
-  silence detector would have to produce events too.
+- `listener.SPEECH_RMS` (450) decides when a spoken dictation has gone quiet.
+  Microphones differ a lot; derive it from the measured room noise instead of
+  a constant.
+- Talking over the speaker: in a synthetic test the echo canceller also
+  suppressed the near-end word. Measure with a real voice before tuning.
+- A wake-only model (openWakeWord, Porcupine) could replace the grammar
+  recognizer if false triggers turn up in daily use.
 
 ### 2. Read-aloud polish
 
@@ -26,9 +20,25 @@ Notes:
   links are dropped. Tune it from real listening.
 - Seeking lands on the start of a sentence; mid-sentence seeking would need
   the sample offset kept for not-yet-rendered sentences.
-- A settings page for the `tts_*` keys (they are config-only today).
 
 ## Done
+
+### Voice commands (hands-free start and stop)
+
+The old "automatic start and stop" item, solved with a spoken trigger rather
+than "record whenever someone speaks" — continuous transcription would keep
+Whisper (~670 MB RAM, ~2.2 GB VRAM) loaded and paste room noise.
+
+- A small Vosk model (~105 MB) listens for the configured phrases only; Whisper
+  starts on "start dictating" and stops on "finish", "send" or 2.5 s of silence.
+- Two recognizers: grammar-limited (proposes) and free (confirms word by word,
+  `commands.accept`). The grammar alone mapped "dayım geldi" to "dayı gönder".
+- The phrase set depends on the state (idle / reading / dictating), so reading
+  words are not listened for when nothing is being read.
+- WebRTC echo cancellation (`livekit`) gets the read-aloud output as reference.
+- `states.PttMachine.voice_start/voice_stop` - spoken dictation is a toggle,
+  so a tap on the talk key still ends it.
+- Phrases, silence and on/off live in Settings → Voice commands and the panel.
 
 ### Read aloud (text to speech)
 

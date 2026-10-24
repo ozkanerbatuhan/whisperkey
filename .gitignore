@@ -12,3 +12,4 @@ __pycache__/
 *.log
 test-*.wav
 voices/
+voice-log.jsonl*

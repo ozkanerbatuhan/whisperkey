@@ -21,12 +21,15 @@ from pathlib import Path
 
 import keyboard
 
+from . import commands, console
 from .audio import MicError, Recorder
 from .config import DATA_DIR, Config
 from .engine_proc import EngineProxy
 from .hotkeys import Hotkeys, KeyCapture, pretty, split_hotkey
+from .listener import Listener
 from .paster import copy_only as clip_only
 from .paster import paste
+from .reading import drop_hallucinations
 from .sounds import Sounds
 from .speaker import Speaker
 from .states import Action, Mode, PttMachine
@@ -59,11 +62,16 @@ class App:
         self.recorder = Recorder(cfg.samplerate, cfg.input_device)
         self.engine = EngineProxy(cfg, on_state=self._engine_state)
         self.tray = Tray(self)
-        self.speaker = None
-        if cfg.tts_key:
-            voice = Path(cfg.tts_voice)
-            self.speaker = Speaker(str(voice if voice.is_absolute() else DATA_DIR / voice),
-                                   cfg.tts_source, cfg.tts_speed)
+        # the voice itself loads lazily (warm()), so an unused speaker costs nothing
+        self.speaker = Speaker(str(_data_path(cfg.tts_voice)), cfg.tts_source, cfg.tts_speed)
+        self.listener: Listener | None = None
+        self._voice_dictation = False   # the running dictation was started by voice
+        self._voice_started = 0.0
+        self._voice_send = False
+        self._voice_ended = 0.0         # when the last spoken dictation stopped
+        self._send_pending = False      # "send" heard while still transcribing
+        self._typed_pid = None          # session typed into without Enter...
+        self._typed_at = 0.0            # ...and when
         self._tap_timer: threading.Timer | None = None
         self.overlay.on_seek = lambda f: self._off_ui(self._seek, f)
         self.overlay.on_speed = lambda step: self._off_ui(self._speed, step)
@@ -132,7 +140,7 @@ class App:
     # ---------------------------------------------------------------- read aloud
 
     def _speaker_keys(self) -> dict:
-        if self.speaker is None:
+        if not self.cfg.tts_key:
             return {}
         return {self.cfg.tts_key: self._on_tts_tap,
                 self.cfg.tts_prev_key: lambda: self._chapter(-1),
@@ -201,6 +209,79 @@ class App:
         elif sp.state == "idle":
             self.overlay.hide()
 
+    # ---------------------------------------------------------------- voice commands
+
+    def _sync_voice(self) -> None:
+        """Start or stop the always-on listener to match `cfg.voice`."""
+        commands.configure(self.cfg.voice_phrases)
+        if self.cfg.voice and self.listener is None:
+            self.speaker.warm()
+            self.listener = Listener(str(_data_path(self.cfg.voice_model)), self._on_voice,
+                                     log_path=str(DATA_DIR / "voice-log.jsonl"))
+            self.speaker.tap = self.listener.feed_far
+            self.listener.start()
+        elif not self.cfg.voice and self.listener is not None:
+            self.speaker.tap = None
+            self.listener.stop()
+            self.listener = None
+
+    def _on_voice(self, action: str, phrase: str) -> None:
+        """A spoken command, from the listener thread."""
+        sp = self.speaker
+        if action == "dictate":
+            if sp.state == "playing":
+                sp.pause()
+            if self.machine.voice_start() is Action.START:
+                self._copy_only = False
+                self._voice_dictation = True
+                self._voice_started = time.monotonic()
+                self._start()
+                ends = next(iter(commands.DICTATING), "")
+                self._show(f"listening - say '{ends}'", T.LIVE)
+        elif action in ("done", "send"):
+            if self._voice_dictation or self.machine.recording:
+                self._voice_send = action == "send"
+                self.machine.voice_stop()
+                self._stop()
+            elif action == "send":
+                self._late_send()
+        elif action == "cancel":
+            self._voice_dictation = self._voice_send = False
+            self._on_cancel()
+        elif action == "read":
+            if sp.state != "playing":
+                sp.toggle()
+            self._ui(self._show_reading)
+        elif action == "pause":
+            sp.pause()
+            self._ui(self._show_reading, 2500)
+        elif action == "resume":
+            if sp.state != "playing":
+                sp.toggle()
+            self._ui(self._show_reading)
+        elif action in ("next", "prev"):
+            self._chapter(+1 if action == "next" else -1)
+
+    def _tick_voice(self) -> None:
+        """UI pump: tell the listener the state, end a spoken dictation on silence."""
+        ls = self.listener
+        if ls is None:
+            return
+        sp = self.speaker
+        if self.recorder.active:
+            ls.state = "dictating"
+        elif sp.state != "idle":
+            ls.state = "reading"
+        else:
+            ls.state = "idle"
+        ls.playing_text = sp.sentence if sp.state == "playing" else ""
+        if self._voice_dictation and self.recorder.active:
+            # give a moment to start talking, then end after `voice_silence` of quiet
+            ref = max(ls.last_speech, self._voice_started + 1.5)
+            if time.monotonic() - ref > self.cfg.voice_silence:
+                self.machine.voice_stop()
+                self._stop()
+
     # ---------------------------------------------------------------- recording
 
     def _start(self) -> None:
@@ -220,12 +301,18 @@ class App:
 
     def _stop(self) -> None:
         audio = self.recorder.stop()
+        voice, send = self._voice_dictation, self._voice_send
+        self._voice_dictation = self._voice_send = False
+        if voice:
+            self._voice_ended = time.monotonic()
+            self._send_pending = False
+            self._typed_pid = None
         self._beep("stop")
         if audio is None or len(audio) / self.cfg.samplerate < self.cfg.min_duration:
             self._hide()
             return
         self._show("transcribing", T.AMBER, busy=True)
-        self.jobs.put((audio, self._copy_only))
+        self.jobs.put((audio, self._copy_only, voice, send))
 
     def _fail(self, message: str) -> None:
         # the overlay disappears after 2.5 s; keep the reason in the console
@@ -241,7 +328,7 @@ class App:
 
     def _worker(self) -> None:
         while True:
-            audio, copy_only = self.jobs.get()
+            audio, copy_only, voice, send = self.jobs.get()
             if audio is None:
                 return
             try:
@@ -250,6 +337,11 @@ class App:
                 self._fail(f"transcription failed: {exc}")
                 continue
 
+            # Whisper makes up subtitle credits ("Altyazı M.K.") on trailing silence
+            result.text = drop_hallucinations(result.text)
+            if self.listener is not None:
+                # the closing "Dayı tamam" is heard by Whisper too
+                result.text = drop_hallucinations(commands.strip_tail(result.text))
             if not result.text:
                 print(f"[whisperkey] no speech found ({result.audio_sec:.1f} s of silence)")
                 self._show("no speech", T.FAIL, 1800)
@@ -259,18 +351,54 @@ class App:
             print(f"[{result.language}] {result.text}   "
                   f"({result.audio_sec:.1f} s audio / {result.elapsed:.1f} s processing)")
 
-            if copy_only:
+            if voice and self.cfg.voice_target:
+                # hands-free: typed into the session that answered last, in the
+                # background - focus, keyboard and mouse stay with whatever you do
+                ok, label = self._deliver_to_session(result.text, send)
+            elif copy_only:
                 ok = clip_only(result.text)
                 label = "copied" if ok else "clipboard locked"
             else:
                 ok = paste(result.text, self.cfg.paste_keys, self.cfg.restore_clipboard)
                 label = self._preview(result.text) if ok else "clipboard locked"
-
+                if ok and send:
+                    time.sleep(0.15)    # let the paste land before Enter
+                    keyboard.send("enter")
+                    label = f"sent: {label}"
             if ok:
                 self._beep("done")
                 self._show(label, T.DONE, 1100)
             else:
                 self._fail(label)
+
+    SEND_GRACE = 15.0   # s after a spoken dictation in which "send" still applies
+
+    def _late_send(self) -> None:
+        """ "Send" after a pause: silence already ended the dictation.
+
+        Still transcribing - the delivery will press Enter. Already typed -
+        press Enter in that session now. Anything older is ignored.
+        """
+        now = time.monotonic()
+        if now - self._voice_ended < self.SEND_GRACE:
+            if self._typed_pid and self._typed_at >= self._voice_ended:
+                if console.type_into(self._typed_pid, "", enter=True):
+                    self._beep("done")
+                    self._show("sent", T.DONE, 900)
+            else:
+                self._send_pending = True
+
+    def _deliver_to_session(self, text: str, send: bool) -> tuple[bool, str]:
+        pid = console.target(self.cfg.voice_target)
+        send = send or self._send_pending
+        self._send_pending = False
+        if pid and console.type_into(pid, text, enter=send):
+            self._typed_pid, self._typed_at = (None if send else pid), time.monotonic()
+            return True, ("sent: " if send else "typed: ") + self._preview(text, 36)
+        # no live session: keep the words, never type into whatever is in front
+        ok = clip_only(text)
+        print(f"[voice] no session to type into (pid {pid}); copied instead")
+        return ok, "no session - copied" if ok else "clipboard locked"
 
     @staticmethod
     def _preview(text: str, limit: int = 44) -> str:
@@ -325,6 +453,8 @@ class App:
             self.sounds.enabled = self.cfg.beep
         elif key == "overlay" and not self.cfg.overlay:
             self.overlay.hide()
+        elif key == "voice":
+            self._sync_voice()
         self.tray.refresh()
 
     # ---------------------------------------------------------- key capture
@@ -370,6 +500,9 @@ class App:
         if rebind:
             self.keys.unbind()
             self.keys.bind()
+        if self.cfg.tts_key:
+            self.speaker.warm()
+        self._sync_voice()
         self.tray.refresh()
         if self.panel.visible:
             self.panel.refresh()
@@ -382,7 +515,9 @@ class App:
         self.keys.unbind()
         if self.speaker is not None:
             self.speaker.stop()
-        self.jobs.put((None, False))
+        if self.listener is not None:
+            self.listener.stop()
+        self.jobs.put((None, False, False, False))
         self.engine.close()
         self.tray.stop()
         self._ui(self.root.quit)
@@ -402,13 +537,15 @@ class App:
         if self.recorder.active and self.cfg.overlay:
             self.overlay.set_level(self.recorder.level)
         self._tick_reading()
+        self._tick_voice()
         self.root.after(33, self._pump)
 
     def run(self) -> None:
         self.keys.bind()
         self.tray.start()
-        if self.speaker is not None:
+        if self.cfg.tts_key:
             self.speaker.warm()
+        self._sync_voice()
         if self.cfg.keep_warm:
             self.engine.start_async()
         print(
@@ -433,3 +570,8 @@ class App:
 def _clock(seconds: float) -> str:
     seconds = int(seconds + 0.5)
     return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _data_path(path: str) -> Path:
+    p = Path(path).expanduser()
+    return p if p.is_absolute() else DATA_DIR / p

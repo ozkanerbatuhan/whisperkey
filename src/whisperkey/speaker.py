@@ -52,6 +52,7 @@ class Speaker:
         self._mtime = 0.0
         self._stream = None
         self.state = "idle"             # idle | playing | paused
+        self.tap = None                 # tap(samples, rate): what was just played (echo reference)
         threading.Thread(target=self._synth_loop, daemon=True).start()
 
     # ------------------------------------------------------------ voice
@@ -118,9 +119,12 @@ class Speaker:
                     self._idx += 1
                     self._pos = 0
                     self._wake.notify()
-            if self._idx >= len(self._parts):
-                self.state = "idle"
-                raise sd.CallbackStop
+            done = self._idx >= len(self._parts)
+        if self.tap is not None and filled:
+            self.tap(out[:filled, 0], self._rate_or_default())
+        if done:
+            self.state = "idle"
+            raise sd.CallbackStop
 
     def _open_stream(self) -> None:
         self._close_stream()
@@ -298,6 +302,14 @@ class Speaker:
             ends = self._starts[1:] + [len(durs)]
             return [(sum(durs[:s]) / total, sum(durs[:e]) / total, t)
                     for s, e, t in zip(self._starts, ends, self._titles, strict=True)]
+
+    @property
+    def sentence(self) -> str:
+        """The sentence being read now and the one before (for the echo check:
+        a recognizer reports a word only after it ended, by then the reading
+        may have moved on)."""
+        with self._lock:
+            return " ".join(self._parts[max(0, self._idx - 1):self._idx + 1])
 
     @property
     def title(self) -> str:

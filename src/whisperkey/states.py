@@ -55,6 +55,19 @@ class PttMachine:
         self.mode = Mode.IDLE
         return Action.STOP
 
+    def voice_start(self) -> Action:
+        """A spoken "start dictating": hands-free, like a tap on the key."""
+        if self.mode is not Mode.IDLE:
+            return Action.NONE
+        self.mode = Mode.TOGGLE
+        return Action.START
+
+    def voice_stop(self) -> Action:
+        if self.mode is Mode.IDLE:
+            return Action.NONE
+        self.mode = Mode.IDLE
+        return Action.STOP
+
     def cancel(self) -> Action:
         if self.mode is Mode.IDLE:
             return Action.NONE

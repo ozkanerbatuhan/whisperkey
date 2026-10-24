@@ -67,3 +67,29 @@ def chapters(raw: str) -> list[tuple[str, str]]:
             title = " ".join(words[:5]) + ("…" if len(words) > 5 else "")
         result.append((title, body))
     return result
+
+
+# Whisper invents these on silence: it learned them from subtitle credits and
+# video outros. Only dropped when they are the whole text or its last sentence.
+HALLUCINATIONS = (
+    "altyazı m.k.", "altyazı m.k", "abone olmayı unutmayın",
+    "izlediğiniz için teşekkürler", "izlediğiniz için teşekkür ederim",
+    "thanks for watching", "thank you for watching", "subtitles by the amara.org community",
+)
+
+
+def drop_hallucinations(text: str) -> str:
+    """Remove a trailing subtitle credit / outro that Whisper made up."""
+    out = text.rstrip()
+    changed = True
+    while changed and out:
+        changed = False
+        # length-preserving lowercase (str.lower turns İ into two characters)
+        low = out.replace("İ", "i").replace("I", "ı").lower().rstrip(" .!")
+        for h in HALLUCINATIONS:
+            h = h.rstrip(" .!")
+            if low.endswith(h) and (len(low) == len(h) or not low[-len(h) - 1].isalnum()):
+                out = out[: len(low) - len(h)].rstrip(" ,;:-")
+                changed = True
+                break
+    return out

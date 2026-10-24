@@ -1,4 +1,4 @@
-"""The settings window. One column, sections split by a hairline, save-apply."""
+"""The settings window. Two columns, sections split by a hairline, save-apply."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import ctypes
 import tkinter as tk
 from tkinter import ttk
 
+from .. import commands
 from ..audio import list_devices
 from ..hotkeys import check_hotkey, pretty
 from . import theme as T
@@ -18,6 +19,12 @@ LANGS = ["auto", "en", "es", "fr", "de", "it", "pt", "nl", "pl", "ru", "tr",
          "ar", "hi", "zh", "ja", "ko"]
 PASTE = ["ctrl+v", "shift+insert"]
 DEFAULT_MIC = "System default"
+VOICE_ACTIONS = [
+    ("dictate", "Start dictating"), ("done", "Finish (paste)"),
+    ("send", "Finish and press Enter"), ("cancel", "Cancel dictation"),
+    ("read", "Start reading"), ("pause", "Pause"), ("resume", "Resume"),
+    ("next", "Next chapter"), ("prev", "Previous chapter"),
+]
 
 
 class SettingsWindow:
@@ -35,9 +42,19 @@ class SettingsWindow:
         self.keyfields: dict[str, KeyField] = {}
         self._capturing: KeyField | None = None
         self.row = 0
-        self.body = tk.Frame(self.win, bg=T.SHELL, padx=22, pady=18)
-        self.body.pack(fill="both", expand=True)
-        self.body.columnconfigure(1, weight=1, minsize=210)
+        # two columns: dictation on the left, read-aloud and voice on the right
+        outer = tk.Frame(self.win, bg=T.SHELL, padx=22, pady=18)
+        outer.pack(fill="both", expand=True)
+        self.left = tk.Frame(outer, bg=T.SHELL)
+        self.right = tk.Frame(outer, bg=T.SHELL)
+        self.foot = tk.Frame(outer, bg=T.SHELL)
+        self.left.grid(row=0, column=0, sticky="n")
+        self.right.grid(row=0, column=1, sticky="n", padx=(32, 0))
+        self.foot.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.foot.columnconfigure(0, weight=1)
+        for col in (self.left, self.right):
+            col.columnconfigure(1, weight=1, minsize=210)
+        self.body = self.left
 
         self._build()
         self.win.update_idletasks()
@@ -120,9 +137,10 @@ class SettingsWindow:
                  font=T.FONT_UI).grid(row=self.row, column=1, sticky="ew", pady=4)
         self.row += 1
 
-    def _keyfield(self, key: str, text: str, value: str) -> None:
+    def _keyfield(self, key: str, text: str, value: str, optional: bool = False) -> None:
         self._label(text)
         field = KeyField(self.body, value, self._capture_start, self._capture_cancel)
+        field.optional = optional       # Backspace clears it (feature off)
         field.grid(row=self.row, column=1, sticky="ew", pady=4)
         self.keyfields[key] = field
         self.row += 1
@@ -197,13 +215,34 @@ class SettingsWindow:
         self._check("beep", "Sound feedback", cfg.beep)
         self._slider("sound_volume", "Volume", cfg.sound_volume)
 
-        self.note = tk.Label(self.body, text="", bg=T.SHELL, fg=T.AMBER,
-                             font=T.FONT_UI, anchor="w")
-        self.note.grid(row=self.row, column=0, columnspan=2, sticky="w", pady=(16, 4))
+        self.body, self.row = self.right, 0
+        self._section("Read aloud")
+        self._keyfield("tts_key", "Read / pause (Backspace = off)", cfg.tts_key, True)
+        self._keyfield("tts_prev_key", "Previous chapter", cfg.tts_prev_key, True)
+        self._keyfield("tts_next_key", "Next chapter", cfg.tts_next_key, True)
+        self._entry("tts_speed", "Speed (0.8-2.5)", cfg.tts_speed, 10)
+        self._entry("tts_source", "File to read", cfg.tts_source)
+
+        self._section("Voice commands")
+        self._check("voice", "Listen for spoken commands (the microphone stays open)",
+                    cfg.voice)
+        self._entry("voice_silence", "Silence that ends dictation (s)", cfg.voice_silence, 10)
+        self._entry("voice_target", "Type into session (empty = paste)", cfg.voice_target)
+        table = {a: list(p) for a, p in commands.DEFAULT_PHRASES.items()}
+        table.update(cfg.voice_phrases or {})
+        for action, text in VOICE_ACTIONS:
+            self._entry(f"phrase:{action}", text, ", ".join(table.get(action, [])))
+        tk.Label(self.body, text="Several phrases: separate them with commas.",
+                 bg=T.SHELL, fg=T.INK_DIM, font=T.FONT_UI, anchor="w").grid(
+            row=self.row, column=0, columnspan=2, sticky="w", pady=(2, 0))
         self.row += 1
 
-        bar = tk.Frame(self.body, bg=T.SHELL)
-        bar.grid(row=self.row, column=0, columnspan=2, sticky="e", pady=(6, 0))
+        self.note = tk.Label(self.foot, text="", bg=T.SHELL, fg=T.AMBER,
+                             font=T.FONT_UI, anchor="w")
+        self.note.grid(row=0, column=0, sticky="w", pady=(16, 4))
+
+        bar = tk.Frame(self.foot, bg=T.SHELL)
+        bar.grid(row=1, column=0, sticky="e", pady=(6, 0))
         self._button(bar, "Close", self.close, T.INK_DIM).pack(side="right", padx=(8, 0))
         self._button(bar, "Save", self.save, T.AMBER).pack(side="right")
 
@@ -230,6 +269,11 @@ class SettingsWindow:
     def _captured(self, field: KeyField, value: str | None) -> None:
         """Arrives through the app's UI queue, not from the hook thread."""
         self._capturing = None
+        if value == "backspace" and getattr(field, "optional", False):
+            field.value = ""
+            field.apply(None)
+            self.note.configure(text="Cleared - do not forget to Save", fg=T.AMBER)
+            return
         if value in (None, "esc"):
             field.apply(None)
             self.note.configure(text="Cancelled", fg=T.INK_DIM)
@@ -252,15 +296,19 @@ class SettingsWindow:
     def save(self) -> None:
         cfg = self.cfg
         old_model = (cfg.model, cfg.device, cfg.compute_type)
-        old_keys = (cfg.hotkey, cfg.lang_key, cfg.repaste_key)
+        old_keys = (cfg.hotkey, cfg.lang_key, cfg.repaste_key,
+                    cfg.tts_key, cfg.tts_prev_key, cfg.tts_next_key)
 
         keys = {name: field.get() for name, field in self.keyfields.items()}
-        for value in keys.values():
+        used = [v for v in keys.values() if v]
+        for name, value in keys.items():
+            if not value and self.keyfields[name].optional:
+                continue
             problem = check_hotkey(value)
             if problem:
                 self.note.configure(text=f"{problem}", fg=T.FAIL)
                 return
-        if len(set(keys.values())) != len(keys):
+        if len(set(used)) != len(used):
             self.note.configure(text="The same shortcut cannot do two jobs", fg=T.FAIL)
             return
 
@@ -271,12 +319,25 @@ class SettingsWindow:
         for key, value in keys.items():
             setattr(cfg, key, value)
         cfg.sound_volume = self.vars["sound_volume"].get() / 100
-        for key in ("keep_warm", "restore_clipboard", "overlay", "beep"):
+        for key in ("keep_warm", "restore_clipboard", "overlay", "beep", "voice"):
             setattr(cfg, key, bool(self.vars[key].get()))
+        cfg.tts_source = self.vars["tts_source"].get().strip() or cfg.tts_source
+        cfg.voice_target = self.vars["voice_target"].get().strip()
+        phrases = {}
+        for action, _ in VOICE_ACTIONS:
+            items = [p.strip() for p in self.vars[f"phrase:{action}"].get().split(",")]
+            items = [p for p in items if p]
+            if not items:
+                self.note.configure(text=f"Every command needs a phrase ({action})", fg=T.FAIL)
+                return
+            if items != commands.DEFAULT_PHRASES[action]:
+                phrases[action] = items     # only what differs from the defaults is saved
+        cfg.voice_phrases = phrases
 
         errors = []
         for key, cast in (("idle_unload_sec", int), ("overlay_offset", int),
-                          ("tap_threshold", float)):
+                          ("tap_threshold", float), ("tts_speed", float),
+                          ("voice_silence", float)):
             try:
                 setattr(cfg, key, cast(self.vars[key].get().replace(",", ".")))
             except ValueError:
@@ -288,7 +349,8 @@ class SettingsWindow:
         cfg.save()
         self.app.apply_settings(
             reload_model=(cfg.model, cfg.device, cfg.compute_type) != old_model,
-            rebind=(cfg.hotkey, cfg.lang_key, cfg.repaste_key) != old_keys,
+            rebind=(cfg.hotkey, cfg.lang_key, cfg.repaste_key,
+                    cfg.tts_key, cfg.tts_prev_key, cfg.tts_next_key) != old_keys,
         )
         self.note.configure(text="Saved", fg=T.DONE)
 

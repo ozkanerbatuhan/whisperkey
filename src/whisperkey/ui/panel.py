@@ -105,6 +105,7 @@ class Panel:
             ("overlay", "Overlay while talking"),
             ("beep", "Sound feedback"),
             ("keep_warm", "Keep the model in memory"),
+            ("voice", "Voice commands"),
         ]
         for i, (key, text) in enumerate(rows):
             self._dim(text, 5 + i)
@@ -117,14 +118,14 @@ class Panel:
             button.grid(row=5 + i, column=1, sticky="e", pady=1)
             self.toggles[key] = button
 
-        self._rule(8)
+        self._rule(9)
 
         self.keys_label = tk.Label(self.body, text="", bg=T.SHELL, fg=T.INK_DIM,
                                    font=T.FONT_UI, anchor="w", justify="left")
-        self.keys_label.grid(row=9, column=0, columnspan=2, sticky="w")
+        self.keys_label.grid(row=10, column=0, columnspan=2, sticky="w")
 
         bar = tk.Frame(self.body, bg=T.SHELL)
-        bar.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(11, 0))
+        bar.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(11, 0))
         self._link(bar, "Quit", self._quit, T.INK_DIM).pack(side="right")
         self._link(bar, "Settings", self._settings, T.AMBER).pack(
             side="right", padx=(0, 14))
@@ -161,11 +162,17 @@ class Panel:
             button.configure(text="on" if on else "off",
                              fg=T.AMBER if on else T.INK_DIM)
 
-        self.keys_label.configure(
-            text=f"{pretty(self.cfg.hotkey)} talk   ·   "
-                 f"{pretty(self.cfg.lang_key)} language   ·   "
-                 f"{pretty(self.cfg.repaste_key)} repeat"
-        )
+        text = (f"{pretty(self.cfg.hotkey)} talk   ·   "
+                f"{pretty(self.cfg.lang_key)} language   ·   "
+                f"{pretty(self.cfg.repaste_key)} repeat")
+        if self.cfg.tts_key:
+            text += f"\n{pretty(self.cfg.tts_key)} read aloud"
+        if self.cfg.voice:
+            from .. import commands
+
+            wake = "  ·  ".join(f"\"{p}\"" for p in commands.WAKE)
+            text += f"\nsay {wake}"
+        self.keys_label.configure(text=text)
 
     # ---------------------------------------------------------------- actions
 

@@ -11,6 +11,10 @@ Pillow>=10
 # Read aloud only (optional): local Piper voices
 piper-tts>=1.3
 
+# Voice commands only (optional): offline keyword listening + echo cancellation
+vosk>=0.3.45
+livekit>=1.0
+
 # NVIDIA GPU only. Remove these two lines for a CPU-only install.
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*
