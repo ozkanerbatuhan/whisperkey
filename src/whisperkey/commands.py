@@ -27,6 +27,7 @@ TEMPLATES = {
         "done": ["{name} tamam"],
         "send": ["{name} gönder"],
         "cancel": ["{name} iptal"],
+        "close": ["{name} kapat", "{name} oturumu kapat"],
     },
     "en": {
         "dictate": ["{name} listen"],
@@ -38,9 +39,10 @@ TEMPLATES = {
         "done": ["{name} done"],
         "send": ["{name} send"],
         "cancel": ["{name} cancel"],
+        "close": ["{name} close", "{name} exit"],
     },
 }
-WAKE_ACTIONS = ("dictate", "read")
+WAKE_ACTIONS = ("dictate", "read", "close")
 READING_ACTIONS = ("next", "prev", "pause", "resume")
 DICTATING_ACTIONS = ("done", "send", "cancel")
 
@@ -76,7 +78,7 @@ def configure(mapping: dict | None = None, name: str = "", lang: str = "tr") -> 
         target.clear()
         target.update({p: a for a in actions for p in table[a]})
 
-MIN_SIMILARITY = 0.6
+MIN_SIMILARITY = 0.65
 MIN_JOINED = 0.8
 MIN_CONFIDENCE = 0.7
 MIN_CONFIDENCE_ALONE = 0.95
@@ -131,9 +133,14 @@ def accept(command: str, confidences: list[float], free_text: str) -> bool:
             return True
     # the free model splits words it does not know: "dayı dinle" -> "da iyi
     # dinle". Compare without spaces against one word more, more strictly.
+    # The start must match too: "kapıyı kapat" is close to "dayıkapat" as a
+    # whole, but it does not begin like the wake name.
     joined = "".join(want)
     for k in (len(want) + 1, len(want) + 2):
-        if k <= len(said) and similar(joined, "".join(said[-k:])) >= MIN_JOINED:
+        if k > len(said):
+            continue
+        tail = "".join(said[-k:])
+        if tail[:2] == joined[:2] and similar(joined, tail) >= MIN_JOINED:
             return True
     return False
 

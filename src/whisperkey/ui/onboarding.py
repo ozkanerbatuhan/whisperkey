@@ -22,6 +22,7 @@ ACTION_TEXT = [
     ("resume", "resume", "while reading"),
     ("next", "next chapter", "while reading"),
     ("prev", "previous chapter", "while reading"),
+    ("close", "close the AI session (types /exit)", "always"),
 ]
 
 

@@ -67,6 +67,14 @@ def test_wake_name_fills_the_templates():
         commands.configure(name="dayı", lang="tr")
 
 
+def test_close_session_phrase():
+    assert phrases("idle")["dayı kapat"] == "close"
+    assert phrases("reading")["dayı oturumu kapat"] == "close"
+    assert "dayı kapat" not in phrases("dictating")
+    assert accept("dayı kapat", [1.0, 1.0], "da iyi kapat")
+    assert not accept("dayı kapat", [1.0, 1.0], "kapıyı kapat")
+
+
 def test_language_from_model_folder():
     assert commands.language_of("voices/vosk-model-small-tr-0.3") == "tr"
     assert commands.language_of("voices/vosk-model-small-en-us-0.15") == "en"

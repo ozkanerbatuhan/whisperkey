@@ -150,8 +150,18 @@ class App:
         if not self.cfg.tts_key:
             return {}
         return {self.cfg.tts_key: self._on_tts_tap,
-                self.cfg.tts_prev_key: lambda: self._chapter(-1),
-                self.cfg.tts_next_key: lambda: self._chapter(+1)}
+                self.cfg.tts_prev_key: lambda: self._chapter_key(-1),
+                self.cfg.tts_next_key: lambda: self._chapter_key(+1)}
+
+    def _chapter_key(self, step: int) -> None:
+        """Chapter keys move through the reading while its bar is up; otherwise
+        they send their idle shortcut (a knob that also switches terminal tabs)."""
+        if self.overlay.reading:
+            self._chapter(step)
+            return
+        idle = self.cfg.tts_next_idle if step > 0 else self.cfg.tts_prev_idle
+        if idle:
+            keyboard.send(idle)
 
     def _off_ui(self, fn, *args) -> None:
         """Overlay clicks arrive on the UI thread; speaker work may render audio."""
@@ -289,6 +299,14 @@ class App:
         elif action == "cancel":
             self._voice_dictation = self._voice_send = False
             self._on_cancel()
+        elif action == "close":
+            # like typing /exit in the session that answered last
+            pid = console.target(self.cfg.voice_target) if self.cfg.voice_target else None
+            if pid and console.type_into(pid, "/exit", enter=True):
+                self._beep("done")
+                self._show("session closed", T.DONE, 1200)
+            else:
+                self._fail("no session to close")
         elif action == "read":
             if sp.state != "playing":
                 sp.toggle()

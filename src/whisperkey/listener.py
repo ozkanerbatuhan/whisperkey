@@ -215,7 +215,9 @@ class Listener:
                 self._log("echo", heard.strip(), phrase, conf)
                 return
             # the free recognizer hears the speaker more than you while reading
-            ok = ok or commands.trusted_alone(conf)
+            # (reading controls only - closing a session needs both to agree)
+            ok = ok or (table[phrase] in commands.READING_ACTIONS
+                        and commands.trusted_alone(conf))
         print(f"[voice] {phrase!r} conf={[round(c, 2) for c in conf]} "
               f"free={heard.strip()!r} -> {'yes' if ok else 'no'}")
         self._log("accepted" if ok else "rejected", heard.strip(), phrase, conf)

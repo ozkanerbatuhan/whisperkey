@@ -24,6 +24,7 @@ VOICE_ACTIONS = [
     ("send", "Finish and press Enter"), ("cancel", "Cancel dictation"),
     ("read", "Start reading"), ("pause", "Pause"), ("resume", "Resume"),
     ("next", "Next chapter"), ("prev", "Previous chapter"),
+    ("close", "Close the session (/exit)"),
 ]
 
 

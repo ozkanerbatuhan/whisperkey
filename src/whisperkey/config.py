@@ -81,6 +81,8 @@ class Config:
     tts_key: str = ""               # tap: play / pause, double tap: media play/pause
     tts_prev_key: str = ""          # previous / next chapter
     tts_next_key: str = ""
+    tts_prev_idle: str = ""         # sent by those keys when nothing is being read,
+    tts_next_idle: str = ""         # e.g. "ctrl+shift+tab" / "ctrl+tab" for a knob
     tts_voice: str = "voices/tr_TR-dfki-medium.onnx"   # relative to the data dir
     tts_source: str = "~/.claude/last-answer.txt"      # the file that is read
     tts_speed: float = 1.5
