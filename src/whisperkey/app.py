@@ -23,7 +23,7 @@ import keyboard
 
 from . import commands, console
 from .audio import MicError, Recorder
-from .config import DATA_DIR, Config
+from .config import DATA_DIR, MODEL_DIR, Config
 from .engine_proc import EngineProxy
 from .hotkeys import Hotkeys, KeyCapture, pretty, split_hotkey
 from .listener import Listener
@@ -245,9 +245,13 @@ class App:
             self.listener = Listener(str(_data_path(self.cfg.voice_model)), self._on_voice,
                                      log_path=str(DATA_DIR / "voice-log.jsonl"),
                                      transcript_dir=str(DATA_DIR / "transcripts")
-                                     if self.cfg.voice_transcript else None)
+                                     if self.cfg.voice_transcript else None,
+                                     command_model=self.cfg.voice_command_model,
+                                     model_dir=str(MODEL_DIR), language=self._voice_lang(),
+                                     command_device=self.cfg.voice_command_device)
             self.speaker.tap = self.listener.feed_far
             self.listener.start()
+            self.listener.warm_command_model()
         elif not self.cfg.voice and self.listener is not None:
             self.speaker.tap = None
             self.listener.stop()
@@ -301,6 +305,14 @@ class App:
         elif action == "cancel":
             self._voice_dictation = self._voice_send = False
             self._on_cancel()
+        elif action == "wake":
+            # the name was heard; the second stage is listening for the rest
+            self._beep("start")
+            if not self.recorder.active and sp.state != "playing":
+                self._show("listening for a command", T.AMBER, 3000)
+        elif action == "unheard":
+            if not self.recorder.active:
+                self._show("did not catch that", T.INK_DIM, 1200)
         elif action == "attention":
             # "<name> ..." heard over the reading: stop talking, listen
             if sp.state == "playing":

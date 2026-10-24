@@ -58,11 +58,28 @@ def _records(text: str, enter: bool):
     return out
 
 
+ENTER_DELAY = 0.3   # s between the text and Enter
+
+
 def type_into(pid: int, text: str, enter: bool = False) -> bool:
-    """Write `text` (and optionally Enter) into the console of process `pid`."""
+    """Write `text` (and optionally Enter) into the console of process `pid`.
+
+    Enter goes in a second write after a pause: input that arrives in one
+    burst looks like a paste to a terminal app (Claude Code included), and an
+    Enter inside a paste becomes a new line instead of "send".
+    """
     # one line: a newline would submit half the message in a chat prompt
     text = " ".join(text.split())
-    recs = _records(text, enter)
+    if text and not _write(pid, _records(text, False)):
+        return False
+    if not enter:
+        return bool(text)
+    if text:
+        time.sleep(ENTER_DELAY)
+    return _write(pid, _records("", True))
+
+
+def _write(pid: int, recs) -> bool:
     if not recs:
         return False
     with _lock:

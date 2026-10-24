@@ -100,7 +100,10 @@ def phrases(state: str) -> dict[str, str]:
 
 
 def grammar(state: str) -> list[str]:
-    return [*phrases(state), "[unk]"]
+    # the bare name too: "dayı ... (pause) ... kapat" is caught by the second
+    # stage, which listens on after the name
+    names = sorted(wake_names()) if state != "dictating" else []
+    return [*phrases(state), *names, "[unk]"]
 
 
 def norm(text: str) -> str:
@@ -151,11 +154,39 @@ def trusted_alone(confidences: list[float]) -> bool:
     return bool(confidences) and min(confidences) >= MIN_CONFIDENCE_ALONE
 
 
+def wake_names() -> set[str]:
+    return {p.split()[0] for p in WAKE if len(p.split()) > 1}
+
+
+def intent(text: str, state: str) -> str | None:
+    """Second stage: the action in a free sentence Whisper wrote after the
+    wake name - "dayı bir önceki bölüme dön" -> prev, "dayı bunu oku" -> read.
+
+    Each phrase minus the wake name is a pattern; its words must appear in
+    the sentence in order (each one fuzzily). The pattern covering the most
+    words wins, so "okumayı durdur" beats a bare "dur".
+    """
+    words = norm(text).split()
+    names = wake_names()
+    words = [w for w in words if not any(similar(w, n) >= 0.75 for n in names)]
+    best, best_len = None, 0
+    for phrase, action in phrases(state).items():
+        want = [w for w in phrase.split() if w not in names]
+        if not want or len(want) <= best_len:
+            continue
+        i = 0
+        for w in words:
+            if i < len(want) and similar(want[i], w) >= 0.75:
+                i += 1
+        if i == len(want):
+            best, best_len = action, len(want)
+    return best
+
+
 def addresses_me(phrase: str) -> bool:
     """A phrase that starts with the wake name ("dayı kapat", not "sonraki")."""
-    names = {p.split()[0] for p in WAKE if len(p.split()) > 1}
     words = norm(phrase).split()
-    return bool(words) and words[0] in names
+    return bool(words) and words[0] in wake_names()
 
 
 def sounds_like_wake(text: str) -> bool:

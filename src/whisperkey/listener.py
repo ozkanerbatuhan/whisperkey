@@ -35,12 +35,32 @@ CHUNK = 10                          # frames per recognizer call (100 ms)
 SPEECH_RATIO = 3.0                  # speech = this many times the room noise...
 SPEECH_FLOOR = 150                  # ...and at least this loud (int16 RMS, after AEC)
 DEBUG = bool(os.environ.get("WHISPERKEY_VOICE_DEBUG"))  # print everything heard
+CAPTURE_BEFORE = 2.5                # s of audio kept from before the name was recognized
+CAPTURE_GRACE = 1.5                 # s to start talking after a bare name
+CAPTURE_PAUSE = 0.8                 # s of quiet that ends the command sentence
+CAPTURE_MAX = 5.0                   # s, longest command sentence
 
 
 class Listener:
     def __init__(self, model_path: str, on_command, device=None, log_path=None,
-                 transcript_dir=None):
+                 transcript_dir=None, command_model: str = "", model_dir=None,
+                 language: str = "tr", command_device: str = "cpu"):
         self.model_path = model_path
+        # second stage: a small Whisper on the CPU reads the sentence after
+        # the wake name ("" = first stage only)
+        self.command_model = command_model
+        self.command_device = command_device    # cpu | cuda | auto
+        self.model_dir = model_dir
+        self.language = language
+        self._model = None
+        self._model_lock = threading.Lock()
+        self._ring: deque = deque(maxlen=int(CAPTURE_BEFORE * 100))   # 10 ms frames
+        self._capture = None
+        self._capture_done = None
+        self._capture_started = 0.0
+        self._capture_result: dict = {}
+        self._capture_state = "idle"
+        self._capture_grace = 0.0
         self.log_path = log_path                # command decisions, for tuning (jsonl)
         self.transcript_dir = transcript_dir    # everything heard, per day (opt-in)
         self._pending = None                    # (time, grammar result) awaiting the free one
@@ -143,6 +163,10 @@ class Listener:
                 self._noise = 0.995 * self._noise + 0.005 * rms
             if rms > max(SPEECH_FLOOR, SPEECH_RATIO * self._noise):
                 self.last_speech = time.monotonic()
+            self._ring.append(pcm)
+            if self._capture is not None:
+                self._capture.append(pcm)
+                self._capture_tick()
             batch.append(clean)
             if len(batch) < CHUNK:
                 continue
@@ -174,11 +198,21 @@ class Listener:
                         self.last_speech = time.monotonic()
             if gram.AcceptWaveform(chunk):
                 result = json.loads(gram.Result())
-                if result.get("text") in commands.phrases(self.state):
+                text = result.get("text", "")
+                if self._capture is not None:
+                    pass                        # the second stage is already listening
+                elif (self.command_model and self.state != "dictating"
+                        and commands.addresses_me(text)):
+                    # "<name> ...": hand the sentence to Whisper (second stage)
+                    self._start_capture(result)
+                elif text in commands.phrases(self.state):
                     # the grammar recognizer finishes first; give the free one a
                     # moment to finish the same words before judging
                     self._pending = (time.monotonic(), result)
                     self._attention(result)
+            if self._capture_done is not None:
+                self._second_stage(*self._capture_done, free)
+                self._capture_done = None
             if self._pending and (free_final or time.monotonic() - self._pending[0] > 0.8):
                 result, self._pending = self._pending[1], None
                 self._decide(result, free)
@@ -193,7 +227,92 @@ class Listener:
         except Exception:
             pass
 
-    def _attention(self, result: dict) -> None:
+    # ------------------------------------------------------------ second stage
+
+    def _start_capture(self, result: dict) -> None:
+        """The name was heard: keep the last seconds (the name and whatever
+        followed it is already in the past) and listen on until a pause."""
+        self._attention(result, force=True)
+        self.on_command("wake", result.get("text", ""))
+        self._capture = list(self._ring)[-int(CAPTURE_BEFORE * 100):]
+        self._capture_started = time.monotonic()
+        # a bare name ("dayı" ... pause ... "kapat") waits a moment for the rest
+        bare = len(result.get("text", "").split()) == 1
+        self._capture_grace = CAPTURE_GRACE if bare else 0.0
+        self._capture_result = result
+        self._capture_state = self.state
+
+    def _capture_tick(self) -> None:
+        now = time.monotonic()
+        # a whole phrase ("dayı kapat") was already over when it was recognized:
+        # end as soon as it is quiet; a bare name waits for the rest
+        if self._capture_grace:
+            quiet = now - max(self.last_speech, self._capture_started + self._capture_grace)                 > CAPTURE_PAUSE
+        else:
+            quiet = now - self.last_speech > CAPTURE_PAUSE
+        if quiet or now - self._capture_started > CAPTURE_MAX:
+            audio = np.concatenate(self._capture).astype(np.float32) / 32768.0
+            self._capture = None
+            self._capture_done = (audio, self._capture_result, self._capture_state)
+
+    def _second_stage(self, audio, result: dict, state: str, free) -> None:
+        """Whisper reads the captured sentence; the verb in it is the command.
+        If Whisper finds none, the first stage's own verdict still applies."""
+        heard = " ".join(t for at, t in self._recent if time.monotonic() - at < 6.0)
+        heard += " " + json.loads(free.PartialResult()).get("partial", "")
+
+        def work():
+            text = self._whisper(audio)
+            action = commands.intent(text, state) if text else None
+            phrase = result.get("text", "")
+            conf = [w.get("conf", 1.0) for w in result.get("result", [])]
+            if action is None and phrase in commands.phrases(state):
+                if commands.accept(phrase, conf, heard):
+                    action = commands.phrases(state)[phrase]
+            print(f"[voice] second stage: {text!r} -> {action}")
+            self._log("whisper", text, action or "", conf)
+            if action:
+                self._recent.clear()
+                self.on_command(action, text)
+            else:
+                self.on_command("unheard", text)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _whisper(self, audio) -> str:
+        with self._model_lock:
+            if self._model is None:
+                from faster_whisper import WhisperModel
+
+                from .engine import _enable_cuda_dlls, cuda_available
+
+                # measured with "base": CPU int8 ~0.9 s per command, process RAM
+                # ~450 MB; GPU ~0.3 s, but the CUDA runtime adds ~700 MB of RAM
+                gpu = self.command_device == "cuda" or (
+                    self.command_device == "auto" and cuda_available())
+                if gpu:
+                    _enable_cuda_dlls()
+                self._model = WhisperModel(self.command_model,
+                                           device="cuda" if gpu else "cpu",
+                                           compute_type="float16" if gpu else "int8",
+                                           download_root=self.model_dir)
+            names = ", ".join(sorted(commands.wake_names()))
+            prompt = ", ".join(list(commands.WAKE) + list(commands.READING)[:4]) or names
+            try:
+                segs, _ = self._model.transcribe(audio, language=self.language,
+                                                 beam_size=1, vad_filter=False,
+                                                 initial_prompt=prompt)
+                return " ".join(s.text.strip() for s in segs).strip()
+            except Exception as exc:
+                print(f"[warning] command transcription failed: {exc}")
+                return ""
+
+    def warm_command_model(self) -> None:
+        if self.command_model:
+            threading.Thread(target=lambda: self._whisper(np.zeros(RATE, np.float32)),
+                             daemon=True).start()
+
+    def _attention(self, result: dict, force: bool = False) -> None:
         """While reading, a sure "<name> ..." means you are talking to it: stop
         talking over you at once, so the command is heard in silence (the
         decision itself comes a moment later, and may still say no)."""
@@ -201,7 +320,7 @@ class Listener:
             return
         phrase = result.get("text", "")
         conf = [w.get("conf", 1.0) for w in result.get("result", [])]
-        if commands.addresses_me(phrase) and conf and min(conf) >= 0.9:
+        if force or (commands.addresses_me(phrase) and conf and min(conf) >= 0.9):
             self.on_command("attention", phrase)
 
     def _transcribe(self, text: str) -> None:

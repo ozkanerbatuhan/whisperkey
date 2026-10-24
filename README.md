@@ -207,6 +207,17 @@ Stop hook in `tools/save_last_answer.py`. No live session → the text is only
 copied to the clipboard. Set `voice_target` to empty to paste into the focused
 window instead.
 
+- **Two stages, like the big assistants.** Siri, Alexa and Home Assistant
+  spot a wake word with a small always-on model and only then understand the
+  sentence with full speech recognition. whisperkey does the same: when the
+  small model hears the name, the last 2.5 s plus whatever follows (until a
+  0.8 s pause; a bare name waits 1.5 s for the rest) go to a small Whisper
+  (`voice_command_model`, default `base`), and the command is the verb found
+  in that sentence. So free wording works too: "dayı bir önceki bölüme dön" →
+  previous, "dayı bunu oku" → read. Measured on CPU: ~0.9 s per command; on
+  the GPU (`voice_command_device: cuda`) ~0.3 s, but the CUDA runtime adds
+  ~700 MB of RAM. If Whisper finds no command, the first stage's verdict below
+  still applies.
 - **Two recognizers, one decision.** A grammar-limited recognizer only knows
   the phrases — and so maps *anything* to the nearest one. A second, free
   recognizer hears the same audio; a command counts only when its words match
@@ -237,7 +248,9 @@ window instead.
   being read is ignored as a second guard. Talking *over* the speaker is the
   weak spot — headphones avoid it entirely.
 - **Cost.** Measured: the Vosk model takes ~105 MB of RAM, the echo canceller
-  ~2 MB, and listening uses about 8 % of one CPU core. No GPU.
+  ~2 MB, the command Whisper (`base`, CPU) a few hundred MB; listening uses
+  about 8 % of one CPU core. The whole tray process sits around 700 MB with
+  voice commands on (300 MB without the second stage). No GPU needed.
 
 **Setup.**
 

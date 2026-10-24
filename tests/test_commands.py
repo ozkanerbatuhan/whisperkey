@@ -107,3 +107,14 @@ def test_addresses_me_only_with_the_name():
     assert addresses_me("dayı kapat")
     assert addresses_me("dayı gönder")
     assert not addresses_me("sonraki")
+
+
+def test_second_stage_intent_from_free_sentence():
+    from whisperkey.commands import intent
+
+    assert intent("dayı oturmuk kapat.", "idle") == "close"       # Whisper's typo
+    assert intent("dayı bir önceki bölümede.", "reading") == "prev"
+    assert intent("dahi bunu oku.", "idle") == "read"
+    assert intent("dayı okumayı durdur", "reading") == "pause"
+    assert intent("bugün hava güzel", "idle") is None
+    assert intent("sonraki", "idle") is None                      # reading words only while reading

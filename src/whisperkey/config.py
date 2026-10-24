@@ -97,6 +97,10 @@ class Config:
     # write everything the listener hears to transcripts/<date>.txt (rough,
     # small-model text; off by default - the microphone is always open)
     voice_transcript: bool = False
+    # second stage: after the wake name, this Whisper model (CPU, int8) reads
+    # the sentence and the command is taken from it; "" = grammar only
+    voice_command_model: str = "base"
+    voice_command_device: str = "cpu"   # cpu (~0.9 s, light) | cuda (~0.3 s, +700 MB RAM) | auto
     # spoken dictation is typed into the console of the process named in this
     # file, in the background; empty = paste into the focused window instead
     voice_target: str = "~/.claude/last-session.json"
