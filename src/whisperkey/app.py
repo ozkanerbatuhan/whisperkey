@@ -306,8 +306,9 @@ class App:
             self._voice_dictation = self._voice_send = False
             self._on_cancel()
         elif action == "wake":
-            # the name was heard; the second stage is listening for the rest
-            self._beep("start")
+            # the name was heard; the second stage is listening for the rest.
+            # No beep: 61 of 85 logged wakes were videos or phone talk, so the
+            # sound waits for Whisper - each confirmed action makes its own
             if not self.recorder.active and sp.state != "playing":
                 self._show("listening for a command", T.AMBER, 3000)
         elif action == "unheard":
